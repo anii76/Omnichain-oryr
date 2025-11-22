@@ -600,7 +600,7 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 <div align="center">
 
-**Built for [Hackathon Name]**
+**Built for ETHGlobal Buenos Aires**
 
 Made with 🔥 using LayerZero, Pyth, and 1inch
 
