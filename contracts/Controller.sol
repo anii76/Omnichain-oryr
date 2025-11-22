@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 import "@layerzerolabs/solidity-examples/contracts/lzApp/NonblockingLzApp.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 
-contract Controller is NonblockingLzApp, Ownable, ReentrancyGuard, Pausable {
+contract Controller is NonblockingLzApp, ReentrancyGuard, Pausable {
     // Pyth feed storage
     mapping(bytes32 => uint256) public lastPrice;
     mapping(address => bool) public updaters; // authorized off-chain pushers
@@ -13,7 +12,6 @@ contract Controller is NonblockingLzApp, Ownable, ReentrancyGuard, Pausable {
     // simple queue for scheduled rebalances (small hackathon-ready queue)
     struct RebalanceJob {
         uint16 dstChainId;
-        bytes dstAddress;
         bytes payload;
         uint256 eta;
         bool executed;
@@ -22,7 +20,7 @@ contract Controller is NonblockingLzApp, Ownable, ReentrancyGuard, Pausable {
 
     event PriceUpdated(bytes32 indexed feedId, uint256 price, address indexed updater);
     event UpdaterSet(address indexed updater, bool allowed);
-    event RebalanceSent(uint16 indexed dstChainId, bytes dstAddress, bytes payload);
+    event RebalanceSent(uint16 indexed dstChainId, bytes payload);
     event RebalanceScheduled(uint256 indexed jobId, uint256 eta);
     event JobExecuted(uint256 indexed jobId);
 
@@ -66,36 +64,35 @@ contract Controller is NonblockingLzApp, Ownable, ReentrancyGuard, Pausable {
     }
 
     /// @notice immediate send to dst chain via LayerZero (owner only)
+    /// @dev requires trustedRemote to be set for _dstChainId via setTrustedRemote
     function sendRebalance(
         uint16 _dstChainId,
-        bytes calldata _dstAddress,
         bytes calldata payload
-    ) external onlyOwner whenNotPaused nonReentrant {
+    ) external payable onlyOwner whenNotPaused nonReentrant {
         require(payload.length > 0, "empty payload");
-        _lzSend(_dstChainId, _dstAddress, payload, payable(msg.sender), address(0), bytes(""));
-        emit RebalanceSent(_dstChainId, _dstAddress, payload);
+        _lzSend(_dstChainId, payload, payable(msg.sender), address(0), bytes(""), msg.value);
+        emit RebalanceSent(_dstChainId, payload);
     }
 
     /// @notice schedule a rebalance to be executed after `delay` seconds by calling executeJob
     function scheduleRebalance(
         uint16 _dstChainId,
-        bytes calldata _dstAddress,
         bytes calldata payload,
         uint256 delay
     ) external onlyOwner whenNotPaused returns (uint256 jobId) {
         jobId = jobs.length;
-        jobs.push(RebalanceJob({dstChainId: _dstChainId, dstAddress: _dstAddress, payload: payload, eta: block.timestamp + delay, executed: false}));
+        jobs.push(RebalanceJob({dstChainId: _dstChainId, payload: payload, eta: block.timestamp + delay, executed: false}));
         emit RebalanceScheduled(jobId, block.timestamp + delay);
     }
 
-    /// @notice execute a scheduled job (anyone can call, owner will be payer)
-    function executeJob(uint256 jobId) external whenNotPaused nonReentrant returns (bool) {
+    /// @notice execute a scheduled job (anyone can call, must provide value for gas)
+    function executeJob(uint256 jobId) external payable whenNotPaused nonReentrant returns (bool) {
         require(jobId < jobs.length, "invalid job");
         RebalanceJob storage j = jobs[jobId];
         require(!j.executed, "already");
         require(block.timestamp >= j.eta, "too early");
         j.executed = true;
-        _lzSend(j.dstChainId, j.dstAddress, j.payload, payable(msg.sender), address(0), bytes(""));
+        _lzSend(j.dstChainId, j.payload, payable(msg.sender), address(0), bytes(""), msg.value);
         emit JobExecuted(jobId);
         return true;
     }

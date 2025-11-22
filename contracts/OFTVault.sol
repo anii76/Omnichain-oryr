@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
-mport "@layerzerolabs/solidity-examples/contracts/token/oft/NonblockingOFT.sol";
+import "@layerzerolabs/solidity-examples/contracts/token/oft/v2/OFTV2.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
@@ -10,7 +9,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
  * @dev Vault that wraps an underlying ERC20 stable token and mints an OFT share token to depositors.
  *      Shares are transferable and can be moved cross-chain via LayerZero by the controller.
  */
-contract OFTVault is NonblockingOFT, Ownable, ReentrancyGuard {
+contract OFTVault is OFTV2, ReentrancyGuard {
     IERC20 public immutable underlying;
     address public controller;
 
@@ -24,7 +23,7 @@ contract OFTVault is NonblockingOFT, Ownable, ReentrancyGuard {
         string memory _symbol,
         address _lzEndpoint,
         address _underlying
-    ) NonblockingOFT(_name, _symbol, 18, _lzEndpoint) {
+    ) OFTV2(_name, _symbol, 8, _lzEndpoint) {
         require(_underlying != address(0), "zero underlying");
         underlying = IERC20(_underlying);
     }
@@ -66,16 +65,16 @@ contract OFTVault is NonblockingOFT, Ownable, ReentrancyGuard {
     function sendCrossChainFrom(
         address from,
         uint16 dstChainId,
-        bytes calldata dstAddress,
+        bytes32 toAddress,
         uint256 shareAmount,
+        address payable refundAddress,
+        address zroPaymentAddress,
         bytes calldata adapterParams
-    ) external onlyController nonReentrant {
+    ) external payable onlyController nonReentrant {
         require(shareAmount > 0, "share>0");
-        // burn sender shares (assume controller has allowance to burn via some governance flow)
-        _burn(from, shareAmount);
-        // send the amount as OFT payload; this uses underlying OFT send semantics
-        _send(dstChainId, dstAddress, shareAmount, payable(msg.sender), address(0), adapterParams);
-        emit CrossChainSent(from, dstChainId, dstAddress, shareAmount);
+        // Use the OFT's sendFrom which handles burning
+        _send(from, dstChainId, toAddress, shareAmount, refundAddress, zroPaymentAddress, adapterParams);
+        emit CrossChainSent(from, dstChainId, abi.encodePacked(toAddress), shareAmount);
     }
 
     // Allow the owner/controller to mint in exceptional cases (e.g., bridging inflow)
@@ -83,14 +82,10 @@ contract OFTVault is NonblockingOFT, Ownable, ReentrancyGuard {
         _mint(to, amount);
     }
 
-    // Receive inbound OFT tokens: NonblockingOFT._nonblockingLzReceive will credit tokens via _creditTo
-    function _nonblockingLzReceive(
-        uint16 _srcChainId,
-        bytes memory _srcAddress,
-        uint64 _nonce,
-        bytes memory _payload
-    ) internal virtual override {
-        // For OFT, NonblockingOFT handles crediting minted amounts via _creditTo
-        // leave empty or add custom logic for on-receive hooks
+    // Override _creditTo to handle incoming OFT tokens if needed
+    function _creditTo(uint16 _srcChainId, address _toAddress, uint _amount) internal virtual override returns(uint) {
+        // OFTV2 handles minting the tokens automatically
+        // You can add custom logic here if needed
+        return super._creditTo(_srcChainId, _toAddress, _amount);
     }
 }

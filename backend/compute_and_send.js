@@ -3,7 +3,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const ControllerABI = [
 "function computeRisk(bytes32,bytes32) public view returns (uint256)",
-"function sendRebalance(uint16,bytes,bytes) external"
+"function sendRebalance(uint16,bytes) external payable"
 ];
 
 
@@ -25,14 +25,21 @@ console.log('risk', risk.toString());
 // simple decision: if risk > threshold send rebal
 const threshold = 500; // 5%
 if(risk.gt(threshold)){
-// Build payload: token, user, amount, swapData (bytes)
-const token = process.env.STABLE_TOKEN;
+// Build payload: tokenIn, user, amountIn, tokenOut, minOut, swapData (bytes)
+const tokenIn = process.env.STABLE_TOKEN;
 const user = process.env.USER_ADDRESS;
-const amount = ethers.utils.parseUnits('10', 18);
-const payload = ethers.utils.defaultAbiCoder.encode(['address','address','uint256','bytes'], [token, user, amount, '0x']);
+const amountIn = ethers.utils.parseUnits('10', 18);
+const tokenOut = process.env.STABLE_TOKEN; // same token for simplicity
+const minOut = 0; // set appropriately in production
+const swapData = '0x'; // empty for simple transfer
+const payload = ethers.utils.defaultAbiCoder.encode(
+['address','address','uint256','address','uint256','bytes'], 
+[tokenIn, user, amountIn, tokenOut, minOut, swapData]
+);
 const dstChainId = parseInt(process.env.DST_CHAIN_ID || '10002'); // LayerZero chain id example
-const dstAddress = ethers.utils.arrayify(process.env.REBALANCER_ADDRESS);
-await controller.sendRebalance(dstChainId, dstAddress, payload);
+// Note: Must set trustedRemote on Controller for dstChainId before calling this
+const fee = ethers.utils.parseEther('0.01'); // LayerZero gas fee
+await controller.sendRebalance(dstChainId, payload, {value: fee});
 console.log('sent rebalance');
 }
 }
